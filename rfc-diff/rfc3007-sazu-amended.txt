@@ -506,7 +506,7 @@ RFC 3007                 Secure Dynamic Update             November 2000
    [RFC3008]  Wellington, B., "Domain Name System Security (DNSSEC)
               Signing Authority", RFC 3008, November 2000.
 
-   [SAZU]     "SAZU: Self-Authenticated Zone Update", rDNS split-signing
+   [SAZU]     "SAZU: Self-Authenticated Zone Update", split-signing
               design proposal, v1.5.  Defines the transaction-
               authorization bootstrap, algorithm policy, and rollover
               mechanism referenced by Section 4.5 of this document.

@@ -3,11 +3,10 @@
 SAZU (Self-Authenticated Zone Update) is meant to eventually be
 implementable across major open-source DNS servers, not just one. This is
 a checklist of what a candidate codebase should already offer — or make
-easy to add — before starting a port, distilled from actually building the
-proof of concept against rDNS (see `RESUME.md` in the main rDNS repo for
-that implementation's status). Treat it as a readiness assessment to run
-against a codebase *before* committing to a port, not as an implementation
-plan.
+easy to add — before starting a port, distilled from experience actually
+building SAZU against real DNS server codebases. Treat it as a readiness
+assessment to run against a codebase *before* committing to a port, not as
+an implementation plan.
 
 For each item: what to check, and why it matters specifically for SAZU
 (not DNS servers in general).
@@ -31,8 +30,9 @@ Does the server already parse/handle UPDATE messages (even if it rejects
 them today), or is that from scratch? Either is workable, but "from
 scratch" means budgeting real time for all 5 prerequisite forms and 4
 update forms, plus their wire-format quirks (empty RDATA as a wildcard,
-the `NONE`/`ANY` class overloads) — this took a full implementation pass
-with its own test suite in the rDNS port.
+the `NONE`/`ANY` class overloads) — this is a full implementation pass in
+its own right, worth its own dedicated test suite rather than a quick
+patch bolted onto whatever query-parsing code already exists.
 
 ## 3. A pluggable authentication point for UPDATE
 
@@ -128,11 +128,12 @@ Can the wire-format and cryptographic code be reused from a *second*,
 independent binary — a minimal test client and a minimal test authority —
 without duplicating it or dragging in the whole server? Building and
 exercising SAZU's crypto against synthetic keys and a stub parent zone,
-completely offline from any production traffic, was what made the rDNS
-port's test suite trustworthy. A codebase where everything is `pub(crate)`
-or private to a single monolithic binary needs a refactor first (as rDNS
-itself did, splitting into a library crate) before this kind of testing is
-possible.
+completely offline from any production traffic, is what makes a port's
+test suite trustworthy without ever touching real DNS infrastructure. A
+codebase where everything is internal to a single monolithic binary, with
+no importable package/library boundary around the wire-format and crypto
+code, needs a refactor first — splitting that code out into its own
+reusable module — before this kind of testing is possible.
 
 ## 12. License and contribution norms
 

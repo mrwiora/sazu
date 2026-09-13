@@ -2,7 +2,7 @@
 
 **Self-Authenticated Zone Update** — a client-held signer pushes DNSSEC-signed zone content to a hoster that never sees the private key, authenticated by nothing but the update's own signature.
 
-*Design Document · rDNS split-signing initiative*
+*Design Document · split-signing DNSSEC*
 
 | | |
 |---|---|
@@ -11,7 +11,6 @@
 | Assumes | single active signer per zone |
 | Auth | SIG(0) only, decided (§9.1) |
 | Carriers | 7.2 raw DNS + 7.3 HTTPS, both supported |
-| Companion analysis | rDNS codebase, Sept 2026 |
 
 > **Abstract**
 >
@@ -35,9 +34,8 @@
 10. [Key bootstrap & rollover](#10-key-bootstrap--rollover)
 11. [Delegation-change monitoring & alerting](#11-delegation-change-monitoring--alerting)
 12. [Operational concerns](#12-operational-concerns)
-13. [Mapping to rDNS](#13-mapping-to-rdns)
-14. [Open questions](#14-open-questions)
-15. [Deferred to post-PoC](#15-deferred-to-post-poc)
+13. [Open questions](#13-open-questions)
+14. [Deferred to post-PoC](#14-deferred-to-post-poc)
 
 ---
 
@@ -82,7 +80,7 @@ The three variants in §7 differ only in **transport**. A second axis — how de
 |---|---|---|---|
 | 0 — Trust the pipe | Authenticates the transaction (TSIG/SIG(0)), stores attached RRs verbatim | Nothing content-wise | None |
 | 1 — Sanity check | + Checks RRSIG inception/expiration window, algorithm number, key tag reference exists | Expired or malformed signatures, wrong key | Low — no crypto library needed |
-| 2 — Full verification | + Cryptographically verifies each RRSIG against the pinned DNSKEY | Bad signatures, tampering, corrupted RDATA | Real work — this is the crypto rDNS's validator currently stubs out |
+| 2 — Full verification | + Cryptographically verifies each RRSIG against the pinned DNSKEY | Bad signatures, tampering, corrupted RDATA | Real work — a from-scratch DNSSEC validator, not something to stub out |
 
 > **Recommendation**
 >
@@ -360,7 +358,7 @@ Whether this is available depends entirely on the **registrar**, not the registr
 - **Content-validity rollover** — can resolvers out on the internet keep validating the zone throughout the transition? This is a solved problem, unaffected by anything in this document: RFC 6781 §4.1's **pre-publish** method (publish the new key unused for a TTL before signing with it — no double-signing) for ZSKs, and its **double-signature** method (both KSKs sign in parallel while the parent's DS catches up) for KSKs. Keep doing this exactly as any DNSSEC operator would; nothing here changes it.
 - **Push-authorization rollover** — how does the *hoster's acceptance gate* (§6) move from trusting the old key to trusting the new one? Nothing in RFC 6781 answers this, because it's specific to having a hoster that pins a key at all. This is the piece this protocol has to define.
 
-The earlier design answered this with a bespoke, dual-signed `RolloverAnnouncement` — a new object with its own fields that never got a real wire encoding (§14 tracked this as an open gap). The simpler mechanism proposed here doesn't need one, because it reuses machinery §10.2 and §5 already define instead of inventing a new one:
+The earlier design answered this with a bespoke, dual-signed `RolloverAnnouncement` — a new object with its own fields that never got a real wire encoding (§13 tracked this as an open gap). The simpler mechanism proposed here doesn't need one, because it reuses machinery §10.2 and §5 already define instead of inventing a new one:
 
 1. Publish the new key at the parent — the §10.3 dual-DS technique for a KSK-level change, or simply adding it to the zone's live DNSKEY RRset for an ordinary ZSK-only change that doesn't need a new DS at all.
 2. Bootstrap a **second registration** for the same zone, under the same customer account (§10.1), through the ordinary first-contact flow (§10.2) — which, per §10.2's tightened policy, always goes through the mandatory chain-of-trust cross-check, since the zone already has a DS by definition here. Resolved: each registration owns its own **separate copy** of the zone content, not a shared row — two worlds the hoster genuinely maintains side by side, kept independently until one retires.
@@ -401,7 +399,7 @@ Out of this protocol's wire format, but worth stating since it's the actual poin
 
 The registration record from §10.6 only earns its keep if something is actually watching. This is the concrete mechanism behind the scope note in §3.
 
-- **Watch loop, concretely:** query the parent for the zone's current NS and DS every **5 minutes per zone** (default, customizable per server) and compare against the last-known-good set observed at §10.2 bootstrap / last rollover. Run this from the same validating-resolver code proposed for §10.2 in §13 — it's the identical query, just repeated.
+- **Watch loop, concretely:** query the parent for the zone's current NS and DS every **5 minutes per zone** (default, customizable per server) and compare against the last-known-good set observed at §10.2 bootstrap / last rollover. Run this from the same validating-resolver code already built for §10.2's chain-of-trust cross-check — it's the identical query, just repeated.
 - **Debounce:** a single mismatch doesn't fire the alarm — **two consecutive failed checks** (10 minutes apart, at the default cadence) raises it to the operator, absorbing a transient resolution hiccup without absorbing a real change.
 - **On the very first confirmed change:** email the registered contact (§10.6) immediately — this is the one signal that something changed outside the channel this whole protocol controls, and it fires from the very first zone the account has, not after some accumulation period.
 - **Fail closed, not just loud:** pair the alert with freezing further pushes for that zone pending manual confirmation. An unexpected parent-level change is exactly the moment to stop trusting automation and wait for a human — the alert should gate behavior, not merely inform.
@@ -416,27 +414,14 @@ The registration record from §10.6 only earns its keep if something is actually
 
 - **Signature expiry monitoring:** if the client's cron job silently stops running, RRSIGs march toward expiration and the zone goes *Bogus* for validating resolvers with no server-side symptom to alert on. Monitor expiry-of-the-soonest-RRSIG as its own metric, independent of whether pushes are "succeeding."
 - **Atomicity:** the RFC 2136 prerequisite check (§5, §6 step 2) gives all-or-nothing semantics for free — lean on it rather than adding your own transaction log.
-- **Rate limiting / quota (starting numbers):** **5 full-zone pushes/day and 50 differential pushes/day per zone**, both customizable per server, on a **24-hour rolling window** — not a fixed calendar-day reset, so the count is always "in the last 24 hours" rather than resettable by timing a burst around midnight. This is a per-tenant quota, not a global rate limit — the acceptance path must be tenant-aware (§13) so one zone's traffic can never exhaust another's allowance. Exceeding it doesn't silently drop the request: respond with `ERR_QUOTA_EXCEEDED` and a message plain enough for the client script to relay to a human ("daily update quota exceeded — contact support to raise it"), rather than an opaque REFUSED. Raising a zone's quota is an out-of-band support action, not something this protocol negotiates.
+- **Rate limiting / quota (starting numbers):** **5 full-zone pushes/day and 50 differential pushes/day per zone**, both customizable per server, on a **24-hour rolling window** — not a fixed calendar-day reset, so the count is always "in the last 24 hours" rather than resettable by timing a burst around midnight. This is a per-tenant quota, not a global rate limit — the acceptance path must be tenant-aware so one zone's traffic can never exhaust another's allowance. Exceeding it doesn't silently drop the request: respond with `ERR_QUOTA_EXCEEDED` and a message plain enough for the client script to relay to a human ("daily update quota exceeded — contact support to raise it"), rather than an opaque REFUSED. Raising a zone's quota is an out-of-band support action, not something this protocol negotiates.
 - **Audit trail and client feedback:** log every accepted *and rejected* transaction's serial, timestamp, source, transaction UUID (§6), and resulting status code — this is both the record that lets you prove what was published and when, and the mechanism a client script uses to report something specific to a human, rather than a bare pass/fail. Per §6 step 7: the DNS RCODE carries the coarse signal (works unmodified with any RFC 2136-aware tool), and a SAZU status code alongside it — `OK`, `ERR_STALE_SERIAL`, `ERR_UNKNOWN_SIGNER`, `ERR_SIG_INVALID`, `ERR_EXPIRED_SIGNATURE`, `ERR_WEAK_ALGORITHM`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED`, `ERR_NO_DS_PUBLISHED` — carries the specific one, plus which name/type/reason triggered it where applicable (§6 step 7). On the raw-DNS carrier (7.2) this rides as a short diagnostic TXT record in the response's Additional section; on the JSON carrier (7.3) it's just a field in the response body. Same code list either way, so a client script's error-handling logic doesn't fork by carrier. The transaction UUID is also what a future status-query interface (§6) would key on.
 
-## 13. Mapping to rDNS
+## 13. Open questions
 
-From the earlier codebase review: none of this exists yet, but the shape of the work is clear.
+None outstanding as of this revision — every item raised through the previous rounds is now decided; see §§5, 6, 10.2, 10.4, 12 for where each landed, and §14 for what's deliberately deferred rather than unresolved (below). Kept as a section heading for whatever the next round of review surfaces, rather than removed for being momentarily empty.
 
-- `src/protocol/opcode.rs` already defines `Opcode::Update` — currently dead code. This is where the §6 algorithm's message parsing hooks in.
-- `src/dnssec/validator.rs` is a stub that returns `Indeterminate` for any signed response — this is exactly the cryptographic-verification code Level 2 (§4) needs, just pointed at incoming updates instead of outgoing resolver responses. Concretely: verification-only (rDNS never holds a private key, only ever checks public-key signatures — the smaller, safer half of any crypto library's surface), backed by `ring::signature` (already reachable transitively via `rustls`/sqlx's `tls-rustls-ring` feature — `Cargo.lock` already carries it) or `aws-lc-rs`, both audited and widely deployed rather than hand-rolled: `RSA_PKCS1_2048_8192_SHA256`/`SHA512` for algorithms 8/10, `ECDSA_P256_SHA256_FIXED`/`ECDSA_P384_SHA384_FIXED` for 13/14, `ED25519` for 15. The genuinely bug-prone part isn't the crypto call, it's **RFC 4034 §6 canonicalization** — lowercasing owner names, canonical RRset ordering, substituting the RRSIG's Original TTL, reconstructing the exact signed-data blob — which is where real-world DNSSEC implementations have historically shipped bugs. Write that from the RFC and its official test vectors directly rather than reinventing the ordering rules from memory, and cross-check output against a mature reference (`delv`, or the DNSSEC module in the pure-Rust `hickory-dns` project) during development, without taking either as a runtime dependency.
-- `src/auth/database.rs`'s Postgres backend with `LISTEN/NOTIFY`-driven live reload is a ready-made publish path — §6 step 6 is close to a direct fit.
-- `src/auth/zone_parser.rs` currently discards RRSIG/DNSKEY/NSEC/NSEC3 field content on parse (falls through to an empty `RData::Raw`) — needs real presentation-format parsing before any variant above can round-trip a signed zone through a zone file.
-- `src/resolver/` is already a working recursive resolver — it's the natural place to implement both the §10.2 validating lookup and the §11 watch loop (fetch DS at the parent, fetch the live DNSKEY, walk the chain to the root) rather than writing a second resolution path.
-- That means `src/dnssec/validator.rs`'s cryptographic verification (needed anyway for §4 Level 2) does triple duty: the same signature-checking code validates incoming pushes, the parent's chain of trust during §10.2 bootstrap, and every §11 watch-loop tick.
-- The Postgres schema needs a new table for the zone registration record (§10.6): the pinned DNSKEY plus the contact address, kept separate from the RRset store — and, per §12's quota, per-zone push counters (full vs. differential, reset daily) so the acceptance path can enforce tenant-scoped limits without one zone's traffic affecting another's.
-- §11's watch loop and notifier should be their own binary/process (per its architecture note), not a task spawned inside the same process as the push-acceptance server — matching rDNS's existing pattern of separate binaries (`rdns` and `rdns-control` already ship as two targets in `Cargo.toml`) rather than a new one.
-
-## 14. Open questions
-
-None outstanding as of this revision — every item raised through the previous rounds is now decided; see §§5, 6, 10.2, 10.4, 12 for where each landed, and §15 for what's deliberately deferred rather than unresolved. Kept as a section heading for whatever the next round of review surfaces, rather than removed for being momentarily empty.
-
-## 15. Deferred to post-PoC
+## 14. Deferred to post-PoC
 
 Deliberately not decided now — real usage from a first proof-of-concept phase is worth more here than a guess:
 
@@ -446,4 +431,4 @@ Deliberately not decided now — real usage from a first proof-of-concept phase 
 
 ---
 
-*SAZU — Self-Authenticated Zone Update · Design proposal v1.5 · Companion to the rDNS split-signing feasibility review*
+*SAZU — Self-Authenticated Zone Update · Design proposal v1.5*
