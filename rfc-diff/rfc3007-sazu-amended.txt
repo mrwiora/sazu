@@ -428,7 +428,16 @@ RFC 3007                 Secure Dynamic Update             November 2000
       zone's first DNSKEY, which is trusted on receipt of the first
       authenticated update for that zone if and only if it matches a DS
       record already published for the zone in the parent zone, per the
-      mechanism defined in [SAZU].  A server MUST continue to accept
+      mechanism defined in [SAZU].  The same first authenticated update
+      MAY additionally include one further DNSKEY not itself matched
+      against a DS record, provided it is covered, in that same update,
+      by a SIG verified per Section 4.5.3 under the DS-matched DNSKEY;
+      this further key is trusted from that point on the same basis as
+      any other DNSKEY added under a key already trusted.  Per [SAZU],
+      this pairing is intended so that the DS-matched key need be used
+      only to establish this trust and to re-establish it on a later
+      rollover, while the further key authenticates and signs ordinary
+      updates thereafter without it.  A server MUST continue to accept
       updates authenticated by a previously-trusted DNSKEY until that
       key is explicitly removed by a verified update, to allow an
       orderly transition between keys.
@@ -442,13 +451,22 @@ RFC 3007                 Secure Dynamic Update             November 2000
    DNS data at risk of masquerade attacks.  The data at risk is that in
    both zones served by the machine and delegated from this machine.
    This requirement does not apply to a zone operating under the
-   externally-signed update policy of Section 4.5, whose zone key need
-   never be held on any network-connected host; that policy instead
-   depends entirely on the server's Section 4.5.3 verification being
-   implemented correctly and applied to every update without exception,
-   since a server that skips or weakens this check would accept and
-   serve unauthenticated data while appearing, to an operator who has
-   not audited it, to be enforcing the same guarantee as Section 4.3.
+   externally-signed update policy of Section 4.5, whose DS-matched
+   DNSKEY (Section 4.5.4) need never be held on any network-connected
+   host; that policy instead depends entirely on the server's Section
+   4.5.3 verification being implemented correctly and applied to every
+   update without exception, since a server that skips or weakens this
+   check would accept and serve unauthenticated data while appearing, to
+   an operator who has not audited it, to be enforcing the same
+   guarantee as Section 4.3.  A further DNSKEY established alongside the
+   DS-matched one under Section 4.5.4 MAY reasonably be held on a
+   network-connected host used only to authenticate and sign ordinary
+   updates: per [SAZU], its exposure is recoverable by an update
+   authenticated under the DS-matched key, requiring no action at the
+   parent zone, which is not true of the DS-matched key itself.  The
+   DS-matched key SHOULD be held to the same offline standard this
+   section otherwise requires, regardless of whether a further key is
+   in use.
 
 
 
