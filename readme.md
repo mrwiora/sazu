@@ -82,9 +82,9 @@ The three variants in §7 differ only in **transport**. A second axis — how de
 | 1 — Sanity check | + Checks RRSIG inception/expiration window, algorithm number, key tag reference exists | Expired or malformed signatures, wrong key | Low — no crypto library needed |
 | 2 — Full verification | + Cryptographically verifies each RRSIG against the pinned DNSKEY | Bad signatures, tampering, corrupted RDATA | Real work — a from-scratch DNSSEC validator, not something to stub out |
 
-> **Recommendation**
+> **Decision**
 >
-> Ship Level 1 for the first working version — it's cheap and catches the most common self-inflicted failure (a cron job that kept running after a key expired). Add Level 2 before trusting this for a zone anyone else depends on; it's the difference between "authenticated pipe" and "actually DNSSEC-verified."
+> Level 2 — full cryptographic verification — is mandatory, unconditionally. There is no server-side mode that accepts content without verifying it. SIG(0) alone proves who sent a transaction, never that the zone content it carries would actually validate for a real DNSSEC resolver once served, which is the one property this whole design exists to guarantee; accepting content nothing has checked is never a legitimate operating mode. Levels 0 and 1 are recorded above for comparison — they name what a partial check would look like and why it would be cheaper — not as accepted alternatives.
 
 ## 5. The update bundle
 
@@ -94,15 +94,17 @@ All three variants carry the same logical content, because all three are, undern
 |---|---|---|
 | Zone | Zone name + class | Which zone this transaction targets |
 | Prerequisite | `SOA serial == last-known-serial` | Built-in staleness/replay guard — rejects the update if the hoster's state has moved since you last read it. No custom "manifest signature" needed. |
-| Update — delete | Old RRSIG/NSEC(3) covering changed names | Clears signatures that are about to become stale |
-| Update — add | New/changed RRs, their RRSIGs, updated NSEC/NSEC3 chain + RRSIGs, bumped SOA + its RRSIG, DNSKEY RRset on rollover (§10.4) | The actual signed content |
+| Update — delete | A retired key's own DNSKEY entry (§10.4/§10.9) | The one case content removal still needs an explicit op: everything else is superseded by the next full push's replace-on-apply rule (below), not deleted piecemeal |
+| Update — add | Every record in the zone, their RRSIGs, a freshly computed NSEC/NSEC3 chain + RRSIGs, bumped SOA + its RRSIG, or (a trust-establishing message, §10.9) the KSK+ZSK DNSKEY RRset alone | The actual signed content |
 | Additional | SIG(0) record | Transaction authentication (added automatically by `nsupdate`) |
 
-> **Full-zone push and differential push are both supported**
+> **Decision: full-zone push only**
 >
-> Neither is a special mode — both are just "how much is in the Update section" of the same RFC 2136 transaction, and the §5 prerequisite check makes either one safe and atomic. A full-zone push (re-sign and send everything on every change) is simpler and structurally safer, since it sidesteps the NSEC-chain risk below entirely. A differential push (only the changed RRsets, plus whichever NSEC/NSEC3 records their insertion or removal touches) is more efficient at scale, at the cost of the client's signer being responsible for getting the chain edit exactly right. Which one a given push uses is a client-side choice per transaction, not a protocol decision — the hoster's acceptance logic (§6) doesn't need to know or care which mode produced the message it's validating.
+> Every push carries the zone's complete, authoritative content — there is no differential/partial update mode. The Update section's adds are the zone's entire current state, full stop; the hoster treats them as an authoritative replacement, purging anything previously served that the new push doesn't re-assert (§6 step 5) rather than requiring the client to enumerate deletions itself. An ordinary RFC 2136 add is never itself a deletion, so without this rule a name dropped from one push to the next would simply linger being served forever; the replace-on-full-push rule closes that outright rather than leaving it to each client's own care.
 >
-> **Starting guidance:** full-zone push for messages up to **1 MB** (default, customizable per server) — comfortably covers most zones and keeps the client simple. Above that size, a differential push is the more sensible default, since re-signing and transmitting the entire zone on every change starts costing real bandwidth and signing time. This is a size-of-message threshold, not a record-count one — a zone with many small records and a zone with few large ones hit it at different scales, which is exactly why it's left as a per-server setting rather than a fixed constant.
+> A differential push (only the changed RRsets, plus whichever NSEC/NSEC3 records their insertion or removal touches) was considered and rejected. It has one structural failure mode a full-zone push doesn't: detecting that a name was *removed* requires the signer to know the zone's complete current name set, which is exactly what NSEC3's own hashed owner names are designed to hide — a hash with no matching candidate among names the signer already expects cannot be resolved back to which real name should be removed. That's NSEC3's hiding property working as designed, not a bug, but it means a differential push can be made to work for additions and still be structurally unable to guarantee correctness for removals. Every record's own RRSIG and the transaction's overall SIG(0) already fully authenticate content regardless of how much of the zone one push carries, so replacing the whole zone is exactly as safe as replacing one record — and, unlike a differential push, needs the signer to hold no memory of prior state at all: its own zone definition simply *is* the push, every time.
+>
+> This trades bandwidth for correctness at scale — re-signing and transmitting an entire zone on every change costs real bandwidth and signing time for a large zone. Revisit only once a deployment's actual zone sizes make that cost the binding constraint, not speculatively; nothing about the rejection above weakens once zones get larger, so any future differential mechanism would need to solve the NSEC3 removal problem for real, not route around it.
 
 > **NSEC vs. NSEC3 — a client/signer choice, not a protocol decision**
 >
@@ -115,7 +117,7 @@ All three variants carry the same logical content, because all three are, undern
 
 > **Operational note — NSEC chains**
 >
-> Inserting one name touches two NSEC(3) records regardless of which is used: the new name's own, and its predecessor's "next" pointer. Patching that incrementally is a real source of chain-consistency bugs. Until the zone is large enough to matter, have the client re-sign and push the **entire** zone on every change rather than a diff — the prerequisite check still makes this safe and atomic, it's just a bigger update section.
+> Inserting one name touches two NSEC(3) records regardless of which is used: the new name's own, and its predecessor's "next" pointer. A full-zone push sidesteps this entirely by recomputing the whole chain from scratch on every push, rather than patching it incrementally — a real source of chain-consistency bugs the decision above avoids by construction, not just for now.
 
 ## 6. Server-side acceptance algorithm
 
@@ -178,7 +180,15 @@ Identical across both carriers — only how the message arrives (§7) changes.
      the same push is perfectly valid. Record exactly which
      name/type failed and why, for step 7's feedback.
 
-5. Apply deletes + adds atomically; store new SOA serial.
+5. If this message carries a real SOA (an ordinary content push, per
+   §5's full-zone-push-only decision): replace the zone's entire
+   served content with exactly what this message's adds contain —
+   anything previously served that isn't re-asserted here is removed,
+   without needing its own explicit delete op. Otherwise (a
+   trust-establishing or key-management message, §10.9, which carries
+   a DNSKEY RRset and nothing else): apply only the deletes and adds
+   present, leaving all other served content untouched. Either way,
+   apply atomically and store the new SOA serial when one was sent.
 
 6. Trigger the existing live-reload path (e.g. Postgres NOTIFY) so
    the zone is served immediately, once step 4/5 have actually
@@ -273,7 +283,7 @@ Content-Type: application/dns+json
 **Additional security drivers, for the record:**
 
 - **Asymmetric secrets only — nothing to leak from the hoster's side.** TSIG requires the hoster to store a symmetric secret whose disclosure directly enables forgery. SIG(0) requires the hoster to store only a public key, which is safe to leak, log, or display by definition — a breach of the hoster's own database exposes nothing an attacker can act on.
-- **One secret in the system, not two.** TSIG would mean managing two independent secrets per zone — the DNSSEC signing key and the TSIG shared secret — each with its own generation, storage, and rotation lifecycle that can independently drift or leak. SIG(0) collapses this to one key with one already-designed rollover procedure (§10.4) that covers both jobs at once.
+- **One kind of secret in the system, not two.** TSIG would mean managing an independent secret per zone alongside its DNSSEC signing keys — the shared secret and the KSK/ZSK pair (§10.9), each with its own generation, storage, and rotation lifecycle that can independently drift or leak. SIG(0) needs nothing beyond the DNSSEC keys the zone already has, authorized by the one rollover procedure (§10.4) those keys already need regardless.
 - **No secret-provisioning channel to secure.** A TSIG secret needs at least one moment where it travels from you to the hoster — a support ticket, a web form, a copy-paste — and that moment is itself an attack surface. A public key has no equivalent requirement; it's safe on any channel, by construction.
 - **Non-repudiation.** TSIG's symmetric MAC means the hoster holds everything needed to produce a transaction indistinguishable from a genuine one; SIG(0)'s asymmetric signature means only the private-key holder can produce a valid one. The accepted-transaction audit log (§12) becomes cryptographic proof of authorization, not just an administrative record.
 - **One trust model, end to end.** First contact (§10.2), ordinary pushes (§6), and rollover (§10.4) are already all built around "prove possession of a specific private key." SIG(0) is the one variant where that's also true of the transport, so the whole protocol reduces to a single mental model rather than two different trust mechanisms (possession-based and secret-based) sitting side by side.
@@ -395,6 +405,20 @@ Same shape here, applied to §10.2's first-contact message:
 
 Out of this protocol's wire format, but worth stating since it's the actual point of splitting signing from serving: the private key should live as an **offline copy**, ideally inside an **HSM**; at an absolute minimum, the on-disk key must be passphrase-protected. A perfectly designed acceptance protocol on the hoster's side is moot if the key it's built to protect sits in plaintext on the same box doing the pushing.
 
+### 10.9 KSK and ZSK: generated together, used for different jobs
+
+Everything above (§10.1–10.4) describes what a key does once it exists; this section defines which key does which job. A zone under this protocol has a **key-signing key (KSK)** and a **zone-signing key (ZSK)**, generated together as a pair at first contact — never the KSK alone.
+
+The KSK keeps exactly the job §10.2/§10.4 already give a key: it is the one thing ever anchored to a parent DS record, and it signs the DNSKEY RRset (RFC 4034's own convention — the key-signing key signs the key set). Once first contact and any later rollover are done, the KSK is not touched again. The ZSK is what authenticates and signs every **routine** push from then on — ordinary content updates, on whatever schedule the operator's automation runs them. An automation host that only ever sends routine content pushes holds only the ZSK, and never needs the KSK for anything: its compromise costs an ordinary same-day key change (the ZSK-only path in §10.4, no registrar step), not a registrar round trip.
+
+This needs no additional wire mechanism — it fits entirely inside §5's update bundle and §6's acceptance algorithm:
+
+- **First contact** (§10.2) carries the KSK and its paired ZSK together, as two DNSKEY records in the same message — either alone, as a trust-establishing message with no zone content at all, or together with the zone's initial content in one message. The KSK signs the DNSKEY RRset; the ZSK's own private half is never needed for this message. Both keys become trusted the moment §10.2's two checks (self-consistency, chain-of-trust) pass against the KSK.
+- **Routine pushes** are ZSK-authenticated and ZSK-signed, and carry no DNSKEY at all — trust in the ZSK was already established at first contact, so nothing about it needs restating on every push.
+- **Rollover (§10.4)** applies exactly as written, per key: a KSK rollover is the "new registration, dual-DS" procedure; registering, replacing, or retiring a ZSK is the "ordinary... change that doesn't need a new DS at all" procedure already described there — no registrar step, no chain-of-trust re-check, authorized by any key already trusted for the zone.
+
+**Distinct from §10.2's deferred multi-signer authorization.** That question is about several independent parties (a CI pipeline, a second operator) each wanting their own revocable identity. This is one signer splitting its own authority across two keys with different privilege levels — closer to a cold key and a warm key held by the same party than to multi-tenant authorization. A multi-signer scheme, if built, layers on top of this split (each independent signer getting its own ZSK-equivalent, all subordinate to one KSK-equivalent anchor) rather than replacing it.
+
 ## 11. Delegation-change monitoring & alerting
 
 The registration record from §10.6 only earns its keep if something is actually watching. This is the concrete mechanism behind the scope note in §3.
@@ -414,7 +438,7 @@ The registration record from §10.6 only earns its keep if something is actually
 
 - **Signature expiry monitoring:** if the client's cron job silently stops running, RRSIGs march toward expiration and the zone goes *Bogus* for validating resolvers with no server-side symptom to alert on. Monitor expiry-of-the-soonest-RRSIG as its own metric, independent of whether pushes are "succeeding."
 - **Atomicity:** the RFC 2136 prerequisite check (§5, §6 step 2) gives all-or-nothing semantics for free — lean on it rather than adding your own transaction log.
-- **Rate limiting / quota (starting numbers):** **5 full-zone pushes/day and 50 differential pushes/day per zone**, both customizable per server, on a **24-hour rolling window** — not a fixed calendar-day reset, so the count is always "in the last 24 hours" rather than resettable by timing a burst around midnight. This is a per-tenant quota, not a global rate limit — the acceptance path must be tenant-aware so one zone's traffic can never exhaust another's allowance. Exceeding it doesn't silently drop the request: respond with `ERR_QUOTA_EXCEEDED` and a message plain enough for the client script to relay to a human ("daily update quota exceeded — contact support to raise it"), rather than an opaque REFUSED. Raising a zone's quota is an out-of-band support action, not something this protocol negotiates.
+- **Rate limiting / quota (starting numbers):** **5 content pushes/day and 50 key-management pushes/day per zone** (trust establishment, rollover, and ZSK registration/retirement — §10.9), both customizable per server, on a **24-hour rolling window** — not a fixed calendar-day reset, so the count is always "in the last 24 hours" rather than resettable by timing a burst around midnight. This is a per-tenant quota, not a global rate limit — the acceptance path must be tenant-aware so one zone's traffic can never exhaust another's allowance. Exceeding it doesn't silently drop the request: respond with `ERR_QUOTA_EXCEEDED` and a message plain enough for the client script to relay to a human ("daily update quota exceeded — contact support to raise it"), rather than an opaque REFUSED. Raising a zone's quota is an out-of-band support action, not something this protocol negotiates.
 - **Audit trail and client feedback:** log every accepted *and rejected* transaction's serial, timestamp, source, transaction UUID (§6), and resulting status code — this is both the record that lets you prove what was published and when, and the mechanism a client script uses to report something specific to a human, rather than a bare pass/fail. Per §6 step 7: the DNS RCODE carries the coarse signal (works unmodified with any RFC 2136-aware tool), and a SAZU status code alongside it — `OK`, `ERR_STALE_SERIAL`, `ERR_UNKNOWN_SIGNER`, `ERR_SIG_INVALID`, `ERR_EXPIRED_SIGNATURE`, `ERR_WEAK_ALGORITHM`, `ERR_QUOTA_EXCEEDED`, `ERR_RATE_LIMITED`, `ERR_NO_DS_PUBLISHED` — carries the specific one, plus which name/type/reason triggered it where applicable (§6 step 7). On the raw-DNS carrier (7.2) this rides as a short diagnostic TXT record in the response's Additional section; on the JSON carrier (7.3) it's just a field in the response body. Same code list either way, so a client script's error-handling logic doesn't fork by carrier. The transaction UUID is also what a future status-query interface (§6) would key on.
 
 ## 13. Open questions
