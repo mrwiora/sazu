@@ -453,7 +453,12 @@ RFC 3007                 Secure Dynamic Update             November 2000
       once its own DS match succeeds; keys added under the previous
       DS-matched key remain trusted.  Such an update is expected to
       follow the double-DS procedure of [RFC6781] Section 4.1.2, so
-      that validating resolvers are not affected by the change.
+      that validating resolvers are not affected by the change.  A
+      server MAY delay such a replacement unless the update also
+      carries a SIG over the new key set, verified per Section 4.5.3
+      under the previous DS-matched DNSKEY; [SAZU] requires a delay
+      (a hold-down) in that case, so that control of the parent zone's
+      DS record alone does not transfer control of the zone at once.
 
 5 - Security Considerations
 

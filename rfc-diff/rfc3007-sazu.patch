@@ -1,5 +1,5 @@
 diff --git a/rfc3007.txt b/rfc3007.txt
-index 1697475..49dd432 100644
+index 1697475..3e5f56d 100644
 --- a/rfc3007.txt
 +++ b/rfc3007.txt
 @@ -25,6 +25,17 @@ Copyright Notice
@@ -99,7 +99,7 @@ index 1697475..49dd432 100644
  
  4.4 - Effects on the zone
  
-@@ -321,7 +360,100 @@ RFC 3007                 Secure Dynamic Update             November 2000
+@@ -321,7 +360,105 @@ RFC 3007                 Secure Dynamic Update             November 2000
     appropriate zone keys.  Changes to NXT records by secure dynamic
     update are explicitly forbidden.  SOA updates are allowed, since the
     maintenance of SOA parameters is outside of the scope of the DNS
@@ -197,11 +197,16 @@ index 1697475..49dd432 100644
 +      once its own DS match succeeds; keys added under the previous
 +      DS-matched key remain trusted.  Such an update is expected to
 +      follow the double-DS procedure of [RFC6781] Section 4.1.2, so
-+      that validating resolvers are not affected by the change.
++      that validating resolvers are not affected by the change.  A
++      server MAY delay such a replacement unless the update also
++      carries a SIG over the new key set, verified per Section 4.5.3
++      under the previous DS-matched DNSKEY; [SAZU] requires a delay
++      (a hold-down) in that case, so that control of the parent zone's
++      DS record alone does not transfer control of the zone at once.
  
  5 - Security Considerations
  
-@@ -331,6 +463,23 @@ RFC 3007                 Secure Dynamic Update             November 2000
+@@ -331,6 +468,23 @@ RFC 3007                 Secure Dynamic Update             November 2000
     mercy of host security to remain a secret.  Exposing this secret puts
     DNS data at risk of masquerade attacks.  The data at risk is that in
     both zones served by the machine and delegated from this machine.
@@ -225,7 +230,7 @@ index 1697475..49dd432 100644
  
  
  
-@@ -388,6 +537,17 @@ RFC 3007                 Secure Dynamic Update             November 2000
+@@ -388,6 +542,17 @@ RFC 3007                 Secure Dynamic Update             November 2000
     [RFC3008]  Wellington, B., "Domain Name System Security (DNSSEC)
                Signing Authority", RFC 3008, November 2000.
  
