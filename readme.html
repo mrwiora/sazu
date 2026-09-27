@@ -611,7 +611,7 @@
 </ol>
 <p>If the registrar cannot hold two DS records (§16), the fallback is to remove DNSSEC before migrating and republish the DS afterwards. That leaves an unsigned window but no outage. Pause any CDS/CDNSKEY automation at the registrar for the duration of a migration, so that it does not "correct" the staged DS RRset.</p>
 <h3><span class="num">8.4</span> Decommissioning</h3>
-<p>A KSK-authenticated decommission message removes everything the server holds for the zone: keys, content, contact and quota state. It increments rather than removes the zone's version (§6.3). Removing the DS at the parent is the zone owner's own step. After decommissioning, the zone can be onboarded again from scratch.</p>
+<p>A KSK-authenticated decommission message removes the zone's keys, content, contact and any pending rollover. It increments rather than removes the zone's version (§6.3); rolling quota windows (§11.2) simply age out. Removing the DS at the parent is the zone owner's own step. After decommissioning, the zone can be onboarded again from scratch.</p>
     </section>
 
     <section id="transports">
@@ -767,7 +767,7 @@
 <p>Defaults (servers <strong>SHOULD</strong> make them configurable):</p>
 <ul>
 <li><strong>Per zone, rolling 24 hours:</strong> 5 content pushes and 50 key-management messages (onboarding, key update, rollover, contact, decommission). These are counted separately because they cost very different amounts. The limit is tenant-scoped, so one zone can never use up another zone's allowance.</li>
-<li><strong>Per source IP, rolling 1 minute:</strong> 30 UPDATE attempts, checked before any cryptography. This bounds scanning across many candidate zone names, which per-zone quotas cannot.</li>
+<li><strong>Per source IP, rolling 1 minute:</strong> 30 UPDATE attempts, checked before any cryptography. This bounds scanning across many candidate zone names, which per-zone quotas cannot. IPv6 sources are counted per /64, since one party normally holds a whole /64.</li>
 </ul>
 <p>Raising a quota is an out-of-band matter between the zone owner and the hoster. The protocol does not negotiate it.</p>
 <h3><span class="num">11.3</span> Algorithm policy</h3>

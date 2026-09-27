@@ -286,7 +286,7 @@ If the registrar cannot hold two DS records (§16), the fallback is to remove DN
 
 ### 8.4 Decommissioning
 
-A KSK-authenticated decommission message removes everything the server holds for the zone: keys, content, contact and quota state. It increments rather than removes the zone's version (§6.3). Removing the DS at the parent is the zone owner's own step. After decommissioning, the zone can be onboarded again from scratch.
+A KSK-authenticated decommission message removes the zone's keys, content, contact and any pending rollover. It increments rather than removes the zone's version (§6.3); rolling quota windows (§11.2) simply age out. Removing the DS at the parent is the zone owner's own step. After decommissioning, the zone can be onboarded again from scratch.
 
 ## 9. Transports
 
@@ -349,7 +349,7 @@ The server never re-signs anything. If the client's automation stops, the RRSIGs
 Defaults (servers **SHOULD** make them configurable):
 
 - **Per zone, rolling 24 hours:** 5 content pushes and 50 key-management messages (onboarding, key update, rollover, contact, decommission). These are counted separately because they cost very different amounts. The limit is tenant-scoped, so one zone can never use up another zone's allowance.
-- **Per source IP, rolling 1 minute:** 30 UPDATE attempts, checked before any cryptography. This bounds scanning across many candidate zone names, which per-zone quotas cannot.
+- **Per source IP, rolling 1 minute:** 30 UPDATE attempts, checked before any cryptography. This bounds scanning across many candidate zone names, which per-zone quotas cannot. IPv6 sources are counted per /64, since one party normally holds a whole /64.
 
 Raising a quota is an out-of-band matter between the zone owner and the hoster. The protocol does not negotiate it.
 
