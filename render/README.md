@@ -48,8 +48,7 @@ conventions:
 - Inline `` `code` `` gets `class="inline"`; a fenced code block does
   not (it's already `<pre><code>`, styled differently on purpose).
 - Every `<ol>` gets `class="plain"`, matching the existing stylesheet's
-  reset for numbered lists that shouldn't look like a numbered list
-  (e.g. §10.2's two bootstrap checks).
+  reset for numbered lists that shouldn't look like a numbered list.
 
 ## What's still hand-maintained
 
@@ -59,17 +58,6 @@ title, dek, status line, and the "Abstract"/"Why SAZU" callouts —
 verbatim, unchanged by a `readme.md` edit. None of that is section
 content the markdown source carries, so there's nothing to generate it
 from; edit `template.html.j2` directly if any of it needs to change.
-
-**Known simplification:** the original hand-authored `readme.html` gave
-§7.2/7.3's "carrier A"/"carrier B" a small colored tag badge
-(`<span class="tag standard">`) next to the heading. Nothing in
-`readme.md`'s plain-text heading ("### 7.2 SAZU over raw DNS UPDATE —
-carrier A") distinguishes that from ordinary heading text, and inventing
-a non-standard markdown convention just to preserve two badges wasn't
-judged worth it — the generated page renders that text plain instead.
-Everything else (callouts, tables, code, numbered sections and
-subsections) matches the original's visual treatment exactly, since
-`template.html.j2` reuses its stylesheet verbatim.
 
 ## Adding a new top-level section or subsection
 

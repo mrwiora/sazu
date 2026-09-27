@@ -211,23 +211,23 @@
 <body>
 <div class="shell">
   <header class="doc-header">
-    <p class="eyebrow">Design Document · split-signing DNSSEC</p>
+    <p class="eyebrow">Protocol proposal · split-signing DNSSEC</p>
     <h1 class="title">SAZU</h1>
-    <p class="dek"><strong>S</strong>elf-<strong>A</strong>uthenticated <strong>Z</strong>one <strong>U</strong>pdate — a client-held signer pushes DNSSEC-signed zone content to a hoster that never sees the private key, authenticated by nothing but the update's own signature.</p>
+    <p class="dek"><strong>S</strong>elf-<strong>A</strong>uthenticated <strong>Z</strong>one <strong>U</strong>pdate: a zone owner signs their own zone with DNSSEC keys they keep to themselves, and pushes the signed zone to a DNS hoster. The hoster verifies it and serves it, but never holds a private key. The only credential involved is the DNSSEC key that already signs the zone.</p>
     <div class="doc-meta">
-      <span>Status: <b>Proposal, v1.5</b></span>
-      <span>Scope: <b>Client signer → hoster ingestion</b></span>
-      <span>Assumes: <b>single active signer per zone</b></span>
-      <span>Auth: <b>SIG(0) only, decided (§9.1)</b></span>
-      <span>Carriers: <b>7.2 raw DNS + 7.3 HTTPS, both supported</b></span>
+      <span>Status: <b>Draft proposal, v2.0</b></span>
+      <span>Scope: <b>Zone owner's signer → hoster's authoritative server</b></span>
+      <span>Wire format: <b>RFC 2136 UPDATE + RFC 2931 SIG(0)</b></span>
+      <span>Carriers: <b>DNS (TCP/UDP) or the same bytes over HTTPS</b></span>
+      <span>Reference implementation: <b><a href="https://github.com/mrwiora/coredns/tree/feat/sazu/plugin/sazu">CoreDNS plugin</a></b></span>
     </div>
     <div class="abstract">
       <span class="label">Abstract</span>
-      <p>SAZU authenticates every message with a single mechanism — SIG(0) (RFC 2931) signing a standard RFC 2136 dynamic update — and supports two equally valid carriers for that same message: raw DNS wire format, or the identical content re-encoded as JSON per RFC 8427 for delivery over plain HTTPS. Neither carrier changes what's decided; §9.1 records why SIG(0) alone, not TSIG, is the authentication mechanism. What no carrier gets you out of is one specific piece of server logic: today's DNS servers assume <em>they</em> generate RRSIG records on update (RFC 3007 §CN says so explicitly) and will strip or refuse foreign ones. Accepting a client-signed RRSIG instead of generating your own is the one deliberate, custom deviation this design makes on purpose — not a gap in the standard, a policy choice.</p>
+      <p>Today a DNSSEC zone hosted by a third party is either signed by the hoster, which then holds your private key, or signed by you on a &ldquo;hidden primary&rdquo; that the hoster has to pull from with AXFR, which means you run a listening server. SAZU is a third option. The zone owner signs everything offline and pushes the complete signed zone as one standard RFC 2136 dynamic UPDATE, authenticated with SIG(0) using the zone's own DNSSEC key. The hoster checks every signature before it publishes anything. It learns which key to trust from the DS record already in the parent zone, so there is no account, no API token and no shared secret. The one deliberate deviation from existing practice is on the server side. RFC 3007 §4.3 assumes the server re-signs updated data with an online zone key. A SAZU server instead verifies signatures the client supplied and never signs anything itself. <a href="rfc-diff/">rfc-diff/</a> shows that change as a proposed amendment to RFC 3007.</p>
     </div>
     <div class="callout" style="max-width:68ch;">
       <span class="label">Why "SAZU"</span>
-      <p>The name describes the mechanism, not a brand: every message in this design — first contact (§10.2), an ordinary push (§6), a key rollover (§10.4) — authenticates itself using the key it already carries, rather than a separately provisioned secret or account. "Self-authenticated" is literal, not marketing.</p>
+      <p>Every SAZU message proves its own authorization with the key it carries or references. That covers onboarding (§7), routine pushes (§6) and key rollover (§8). There is no second credential. &ldquo;Self-authenticated&rdquo; describes the mechanism literally.</p>
     </div>
   </header>
 
@@ -254,7 +254,7 @@
   </main>
 
   <footer>
-    SAZU — Self-Authenticated Zone Update · Design proposal v1.5
+    SAZU — Self-Authenticated Zone Update · Draft proposal v2.0
   </footer>
 </div>
 

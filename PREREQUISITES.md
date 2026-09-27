@@ -72,17 +72,19 @@ road, not a detail.
 
 ## 6. A live zone-mutation API
 
-Can a single RRset be added, replaced, or deleted in an already-loaded,
-already-serving zone, without reloading the whole zone from a file or
-database? Many authoritative implementations treat zone data as
-effectively immutable after load (reload-from-disk is the only "update"
-path) — that model is incompatible with SAZU, which needs sub-second
-application of a signed update to already-serving data. Check specifically
-for: (a) a mutation API scoped to one RRset, not the whole zone, and (b) a
-concurrency model that lets that mutation happen safely while other
-threads/tasks are answering read queries against the same zone
-(`RwLock`/similar over the zone store, not a full-zone copy-on-write that
-would make frequent small updates expensive).
+Can an already-loaded, already-serving zone have its content replaced
+at runtime, without restarting the server or reloading its
+configuration? Many authoritative implementations treat zone data as
+effectively immutable after load, and reloading from disk is the only
+"update" path. That model is awkward for SAZU, where a push is applied
+as soon as it has been verified. Check specifically for: (a) an atomic
+whole-zone replacement that keeps the apex DNSKEY RRset and its RRSIGs,
+since every content push is a complete zone (spec §5.3); (b) a
+single-RRset mutation for the DNSKEY RRset, which key management changes
+on its own (spec §8.1); and (c) a concurrency model in which a query
+sees either the old zone or the new one and never a mix
+(copy-on-write or swap-on-commit both fit well here, since updates are
+whole-zone and infrequent).
 
 ## 7. A policy hook for first-contact zone creation
 
