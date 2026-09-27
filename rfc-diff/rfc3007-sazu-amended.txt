@@ -400,7 +400,10 @@ RFC 3007                 Secure Dynamic Update             November 2000
       NXT/NSEC/NSEC3 record supplied under Section 4.4, an accompanying
       SIG (RRSIG) record MUST be present and MUST be verified by the
       server against a DNSKEY the server currently trusts for the zone
-      before the update is applied.  Verification MUST confirm that:
+      before the update is applied.  Verification MUST be performed
+      against the RRset as it will exist in the zone once the update is
+      applied, not merely against the records present in the update.
+      Verification MUST confirm that:
 
       (a)  the SIG's temporal validity period (inception and expiration)
            is currently valid;
@@ -409,38 +412,48 @@ RFC 3007                 Secure Dynamic Update             November 2000
            configured policy;
 
       (c)  the SIG's owner name, type covered, and RDATA correspond
-           exactly to the RRset it accompanies; and
+           exactly to the RRset it accompanies;
 
       (d)  the signature itself is cryptographically valid for that
-           RRset under the referenced DNSKEY.
+           RRset under the referenced DNSKEY; and
 
-      If any supplied SIG fails verification under (a) through (d), or
+      (e)  for the zone apex KEY (DNSKEY) RRset, the referenced DNSKEY
+           is one matched against a DS record in the parent zone per
+           Section 4.5.4, since validating resolvers accept no other
+           signer for that RRset.
+
+      If any supplied SIG fails verification under (a) through (e), or
       is absent where required by this section, the server MUST reject
-      the update in its entirety with RCODE REFUSED and MUST NOT apply
-      any part of it.  This is a change from Section 4.1, under which an
-      unverified SIG is ordinarily added rather than checked.
+      the update in its entirety and MUST NOT apply any part of it.
+      This is a change from Section 4.1, under which an unverified SIG
+      is ordinarily added rather than checked.
 
    4.5.4 - Key rollover
 
       An update MAY include a new DNSKEY record for the zone.  A DNSKEY
       so added MUST itself be covered by a SIG verified per Section
-      4.5.3 under a DNSKEY already trusted for the zone, except for the
-      zone's first DNSKEY, which is trusted on receipt of the first
-      authenticated update for that zone if and only if it matches a DS
-      record already published for the zone in the parent zone, per the
-      mechanism defined in [SAZU].  The same first authenticated update
-      MAY additionally include one further DNSKEY not itself matched
-      against a DS record, provided it is covered, in that same update,
-      by a SIG verified per Section 4.5.3 under the DS-matched DNSKEY;
-      this further key is trusted from that point on the same basis as
-      any other DNSKEY added under a key already trusted.  Per [SAZU],
-      this pairing is intended so that the DS-matched key need be used
-      only to establish this trust and to re-establish it on a later
-      rollover, while the further key authenticates and signs ordinary
-      updates thereafter without it.  A server MUST continue to accept
-      updates authenticated by a previously-trusted DNSKEY until that
-      key is explicitly removed by a verified update, to allow an
-      orderly transition between keys.
+      4.5.3 under the zone's DS-matched DNSKEY, except for a DS-matched
+      DNSKEY itself, which is trusted on receipt of an authenticated
+      update for that zone if and only if it matches a DS record
+      published for the zone in the parent zone, validated from a
+      configured trust anchor, per the mechanism defined in [SAZU].
+      The update that establishes a DS-matched DNSKEY MAY additionally
+      include further DNSKEYs not themselves matched against a DS
+      record, provided they are covered, in that same update, by a SIG
+      verified per Section 4.5.3 under the DS-matched DNSKEY; such keys
+      are trusted from that point on the same basis as any other DNSKEY
+      added under the DS-matched key.  Per [SAZU], this pairing is
+      intended so that the DS-matched key need be used only to
+      establish trust, to change the zone's key set, and to re-establish
+      trust on a later rollover, while the further keys authenticate
+      and sign ordinary updates without it.
+
+      A later update that introduces a different DS-matched DNSKEY, and
+      removes the previous one, replaces the previous DS-matched key
+      once its own DS match succeeds; keys added under the previous
+      DS-matched key remain trusted.  Such an update is expected to
+      follow the double-DS procedure of [RFC6781] Section 4.1.2, so
+      that validating resolvers are not affected by the change.
 
 5 - Security Considerations
 
@@ -524,8 +537,12 @@ RFC 3007                 Secure Dynamic Update             November 2000
    [RFC3008]  Wellington, B., "Domain Name System Security (DNSSEC)
               Signing Authority", RFC 3008, November 2000.
 
+   [RFC6781]  Kolkman, O., Mekking, W. and R. Gieben, "DNSSEC
+              Operational Practices, Version 2", RFC 6781,
+              December 2012.
+
    [SAZU]     "SAZU: Self-Authenticated Zone Update", split-signing
-              design proposal, v1.5.  Defines the transaction-
+              design proposal, v2.0.  Defines the transaction-
               authorization bootstrap, algorithm policy, and rollover
               mechanism referenced by Section 4.5 of this document.
               (Informative reference; not an RFC at the time of this
