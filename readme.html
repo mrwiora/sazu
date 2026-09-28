@@ -267,8 +267,6 @@
 
       <li><a href="#registrar-notes-informative">16. Registrar notes (informative)</a></li>
 
-      <li><a href="#changes-since-v1-5">17. Changes since v1.5</a></li>
-
     </ol>
   </details>
 
@@ -308,8 +306,6 @@
 
       <li><a href="#registrar-notes-informative">16. Registrar notes (informative)</a></li>
 
-      <li><a href="#changes-since-v1-5">17. Changes since v1.5</a></li>
-
     </ol>
   </nav>
 
@@ -332,7 +328,7 @@
 <li>The zone owner runs no listening service. Pushes are outbound only.</li>
 <li>The hoster verifies, stores and serves. It never signs.</li>
 <li>Authorization to publish rests on possession of the zone's DNSSEC keys, anchored at the parent's DS. There is no second credential with its own lifecycle.</li>
-<li>Only existing IETF wire formats and mechanisms are used: RFC 2136, RFC 2931, RFC 4034/4035, RFC 5155 and RFC 8484.</li>
+<li>Only existing IETF wire formats and mechanisms are used: RFC 2136, RFC 2931, RFC 4034/4035, RFC 5155, RFC 8484 and RFC 8914. Queries are answered exactly as by any authoritative server (§6.4).</li>
 </ul>
 <p><strong>Non-goals</strong></p>
 <ul>
@@ -352,7 +348,7 @@
   build NSEC/NSEC3 chain
           │
           │  RFC 2136 UPDATE + SIG(0)            ┌───────────────────────────────┐
-          └────── TCP/53, UDP/53 or HTTPS ──────▶│ 1. verify SIG(0) against the  │
+          └─────── TCP/53, UDP/53 or DoH ───────▶│ 1. verify SIG(0) against the  │
                                                  │    zone's pinned keys         │
      first contact / KSK rollover only:          │ 2. verify every RRSIG         │
      server checks parent DS  ◀──── DNSSEC ──────│ 3. replace served zone        │
@@ -422,13 +418,14 @@
 <li><strong>Zone section:</strong> exactly one entry: the zone apex, class IN, type SOA.</li>
 <li><strong>Prerequisite section:</strong> carries the zone-version prerequisite (§6.3), which every control change and a zone's first content push <strong>MUST</strong> include. It <strong>MAY</strong> carry further RFC 2136 §2.4 prerequisites, which the server evaluates as RFC 2136 specifies.</li>
 <li><strong>Update section:</strong> the operations for one of the message kinds in §5.2.</li>
-<li><strong>Additional section:</strong> the last record <strong>MUST</strong> be a SIG(0) record (RFC 2931 §3) covering the whole message.</li>
+<li><strong>Additional section:</strong> the last record <strong>MUST</strong> be a SIG(0) record (RFC 2931 §3) covering the whole message. Clients <strong>SHOULD</strong> include an OPT record (EDNS(0), RFC 6891), so the server can report status codes (§10).</li>
 </ul>
+<p>The prerequisite and update sections <strong>MUST</strong> pass RFC 2136's prescan: every name is in the zone (else NOTZONE), prerequisites have TTL 0 and the class/RDATA forms of RFC 2136 §2.4 (§3.2.1), and updates the forms of §2.5 (§3.4.1.3); anything else is FORMERR.</p>
 <p>SIG(0) specifics:</p>
 <ul>
 <li>The SIG(0) signer name <strong>MUST</strong> be the zone apex. The key is identified by key tag and algorithm, and <strong>MUST</strong> be one of the zone's DNSKEYs. At onboarding and KSK rollover it is the candidate KSK carried in the message itself. The server never fetches a KEY RR from the DNS. The SIG(0) key is the zone key. RFC 2931 advises against this (it models SIG(0) signers as hosts or users), so it is a deliberate relaxation, justified in §13.1 and written up as an amendment in <a href="rfc-diff/"><code class="inline">rfc-diff/</code></a>.</li>
 <li>Because the SIG(0) key is a DNSKEY, the SIG(0) algorithm is always that DNSKEY's algorithm.</li>
-<li>The signature covers the exact wire bytes as sent (RFC 2931 §3.1). Servers <strong>MUST</strong> verify against the bytes as received, never against a re-encoding of the parsed message. This is why the HTTPS carrier transports the wire bytes verbatim (§9.2).</li>
+<li>The signature covers the exact wire bytes as sent (RFC 2931 §3.1). Servers <strong>MUST</strong> verify against the bytes as received, never against a re-encoding of the parsed message. This is why DNS over HTTPS carries the wire bytes verbatim (§9.2).</li>
 <li><code class="inline">expiration − inception</code> <strong>MUST NOT</strong> exceed the server's maximum SIG(0) lifetime. It is <strong>RECOMMENDED</strong> to be 1 hour plus 5 minutes of clock skew. Servers <strong>MUST</strong> reject messages whose SIG(0) window is longer, or that are outside their window at receipt.</li>
 </ul>
 <h3><span class="num">5.2</span> Message kinds</h3>
@@ -493,8 +490,9 @@
 <ul>
 <li>the apex SOA and every other RRset, <em>except</em> the apex DNSKEY RRset (which only §8 manages)</li>
 <li>a complete NSEC or NSEC3 chain (and NSEC3PARAM, if NSEC3 is used)</li>
-<li>an RRSIG for every one of those RRsets, made by a zone key</li>
+<li>an RRSIG for every one of those RRsets that is the zone's authoritative data, made by a zone key. The NS RRset at a delegation point and glue below it are not authoritative data: they are carried unsigned and are left out of the NSEC/NSEC3 chain (RFC 4035 §2.2, §2.3). The chain <strong>MUST</strong> be complete as RFC 4034 §4 and RFC 5155 §7.1 define it, including NSEC3 records for empty non-terminals; its TTL is the lesser of the SOA's TTL and its MINIMUM field (RFC 9077).</li>
 </ul>
+<p>The pushed zone <strong>MUST</strong> be a valid zone: the records of an RRset share one TTL (RFC 2181 §5.2), a name with a CNAME has no other data except its RRSIGs and NSEC (RFC 2181 §10.1, RFC 4035 §2.5), and no name exists below a DNAME (RFC 6672 §2.4). A server <strong>MUST</strong> refuse a push that isn't (<code class="inline">ERR_INVALID_ZONE_CONTENT</code>).</p>
 <p>The server replaces everything it serves for the zone with the push's contents, except the DNSKEY RRset and its RRSIGs. Anything not re-asserted is removed. There are no partial content updates. A message that changes served content without adding an apex SOA <strong>MUST</strong> be rejected. §13.2 explains why.</p>
 <p>The choice between NSEC and NSEC3 belongs to the signer. The server stores and serves whatever chain arrives. The <strong>RECOMMENDED</strong> default is NSEC3 with zero extra iterations, an empty salt and no opt-out (RFC 9276). That gives resistance to zone walking at roughly the cost of NSEC.</p>
     </section>
@@ -503,7 +501,7 @@
       <h2><span class="num">6</span> Server processing</h2>
 <h3><span class="num">6.1</span> Algorithm</h3>
 <p>The server processes each message as follows. Every step fails closed, and nothing is applied until every step has passed.</p>
-<pre><code>0.  Scope: is the zone name one this server accepts?     → REFUSED
+<pre><code>0.  Scope: is the zone name one this server accepts?     → NOTAUTH (RFC 2136 §3.1.1)
 1.  Rate limit: per-source-IP budget (§11.2).            → REFUSED  ERR_RATE_LIMITED
 2.  Capture the exact wire bytes. Unavailable?            → SERVFAIL
 3.  Take the per-zone update lock (all later steps are serialized per zone).
@@ -514,8 +512,12 @@
       zone unknown:  the candidate is the single SEP DNSKEY in the message
                      (no SEP key → REFUSED  ERR_FIRST_CONTACT_REQUIRES_KSK).
     The candidate algorithm is below the floor (§11.3)?  → REFUSED  ERR_WEAK_ALGORITHM
-    Signature, window or lifetime is invalid?            → NOTAUTH
+    Signature or window is invalid, or the signer name
+    isn't the zone apex?                                 → REFUSED (RFC 3007 §2)
+    Lifetime too long (§5.1)?                            → REFUSED  ERR_SIG0_LIFETIME_TOO_LONG
+    Prescan (§5.1).                                       → FORMERR / NOTZONE
 5.  Classify (§5.2). Is the signer allowed for the kind?  → REFUSED / FORMERR
+    Content push that isn't a valid zone (§5.3)?          → REFUSED  ERR_INVALID_ZONE_CONTENT
 6.  Version check (§6.3):
       control change or first content push without one   → REFUSED  ERR_VERSION_REQUIRED
       version not the zone's current one                  → NXRRSET  ERR_STALE_VERSION
@@ -532,7 +534,7 @@
 9.  Evaluate RFC 2136 prerequisites.                     → NXRRSET/YXRRSET/…  (ERR_STALE_SERIAL for SOA)
 10. Content push only: new SOA serial &gt; current serial
     (RFC 1982 arithmetic).                               → REFUSED  ERR_STALE_SERIAL
-11. Verify signatures (§6.2).                             → NOTAUTH  ERR_SIG_INVALID / ERR_EXPIRED_SIGNATURE
+11. Verify signatures (§6.2).                             → REFUSED  ERR_SIG_INVALID / ERR_EXPIRED_SIGNATURE
 12. Persist, then apply atomically. Queries see either the old zone or the new
     one, never a mix.
 13. Update key state (pin KSK / add or retire ZSK) and contact; for a control
@@ -543,7 +545,7 @@
 <h3><span class="num">6.2</span> Signature verification (mandatory)</h3>
 <p>Signature verification is not optional and there is no mode that turns it off. SIG(0) proves who sent a message. Only RRSIG verification proves that what the server is about to serve will actually validate.</p>
 <ul>
-<li>Every RRset the message adds <strong>MUST</strong> be covered by at least one RRSIG in the same message that verifies (RFC 4035 §5.3) against a permitted key and is inside its validity window at receipt.</li>
+<li>Every RRset the message adds that is the zone's authoritative data <strong>MUST</strong> be covered by at least one RRSIG in the same message that verifies (RFC 4035 §5.3) against a permitted key and is inside its validity window at receipt. Delegation NS RRsets and glue (§5.3) <strong>MUST NOT</strong> be signed; the zone cuts are those of the pushed zone. Every RRSIG the message carries <strong>MUST</strong> itself verify over an RRset the message adds.</li>
 <li>Verification <strong>MUST</strong> be done against the RRset <strong>as it will be served after the update is applied</strong>, not only against the records in the message. For a content push these are the same thing, because the whole zone is replaced. For DNSKEY changes it means that the RRSIG must cover the complete resulting DNSKEY RRset.</li>
 <li>Permitted keys: for the apex DNSKEY RRset, <strong>only</strong> the KSK being pinned (the pinned KSK, or at onboarding and rollover the candidate KSK). A validating resolver only accepts a DNSKEY RRset signed by a key the parent DS matches (RFC 4035 §5.2), so an RRSIG(DNSKEY) from a ZSK would give a server-accepted but bogus zone. For every other RRset, any zone key.</li>
 <li>A single failure rejects the whole message. The response identifies the failing name and type where possible.</li>
@@ -561,6 +563,9 @@
 </ol>
 <p>A control message therefore names exactly one version. It applies at most once, and of two control changes signed for the same version only one can apply; the other must be re-read and re-signed. Content pushes do not change the version, so a control change prepared on an offline KSK host, against the published version, stays valid across any number of routine content pushes until it is sent.</p>
 <p>Because both counters are zone state, a server that shares zones with other instances replicates them together with the zone's content and keys (§11.7).</p>
+<h3><span class="num">6.4</span> Answering queries</h3>
+<p>A SAZU server is an ordinary authoritative server for the zones it holds, and <strong>MUST</strong> answer queries as RFC 1034 §4.3.2, RFC 2308, RFC 4035 §3 and RFC 5155 §7.2 require, from the pushed data only. That covers CNAME and DNAME (RFC 6672) processing, wildcard synthesis (RFC 4592), empty non-terminals, referrals at zone cuts with glue (RFC 9471), the SOA with the negative-caching TTL in negative answers, and — when the query sets the DO bit (RFC 3225) — the RRSIGs and the NSEC or NSEC3 records that prove NXDOMAIN, NODATA, a wildcard expansion or the absence of a DS at a delegation. Because the owner pushes a complete chain (§5.3), every such proof already exists, signed, in the zone. The server <strong>MUST NOT</strong> synthesize or sign denial records.</p>
+<p>The DS RRset at a cut belongs to the parent side (RFC 4035 §3.1.4.1); a server holding both parent and child answers DS queries for the child's apex from the parent. EDNS(0) is handled per RFC 6891, and a server <strong>SHOULD</strong> answer ANY over UDP with a single RRset (RFC 8482).</p>
     </section>
 
     <section id="onboarding-first-contact">
@@ -619,17 +624,16 @@
 <p>The two carriers transport byte-identical messages and share the processing in §6. Choose by network path.</p>
 <h3><span class="num">9.1</span> DNS (TCP and UDP port 53)</h3>
 <p>Clients <strong>SHOULD</strong> use TCP. Signed pushes routinely exceed one unfragmented UDP datagram. Servers <strong>MUST NOT</strong> accept onboarding or KSK-rollover messages over UDP. Both trigger outbound chain-of-trust queries, and over UDP the source address is spoofable, which would defeat per-IP rate limiting. Other message kinds <strong>MAY</strong> be accepted over UDP.</p>
-<h3><span class="num">9.2</span> HTTPS</h3>
-<p>The client sends the exact wire-format message as an HTTP POST body with <code class="inline">Content-Type: application/dns-message</code>, using the RFC 8484 conventions (for example <code class="inline">POST https://push.hoster.example/dns-query</code>). The response is the wire-format DNS response. HTTPS carries no additional authentication, since SIG(0) inside the body is the only credential.</p>
-<p>A server <strong>MAY</strong> also accept a JSON envelope <code class="inline">{"wire": "&lt;base64 of the same bytes&gt;"}</code> for clients and tooling that prefer JSON. This is a wrapper around the identical bytes, not a structural encoding.</p>
-<div class="callout"><span class="label">Why not RFC 8427 JSON</span>
-<p>v1.5 proposed a structural JSON encoding of the message (RFC 8427). That cannot work with SIG(0). The signature covers the literal wire bytes, including name compression, label case and record order, and a structural JSON form has no lossless way back to those bytes, so the server would have nothing it could verify.</p>
+<h3><span class="num">9.2</span> DNS over HTTPS</h3>
+<p>The client sends the exact wire-format message as DNS over HTTPS (RFC 8484): an HTTPS POST with <code class="inline">Content-Type: application/dns-message</code> (for example <code class="inline">POST https://push.hoster.example/dns-query</code>). The response is the wire-format DNS response. HTTPS carries no additional authentication, since SIG(0) inside the body is the only credential. RFC 8484 requires HTTPS; plain HTTP is not a carrier.</p>
+<div class="callout"><span class="label">Why not a JSON encoding</span>
+<p>A structural JSON form of the message (RFC 8427) cannot work with SIG(0). The signature covers the literal wire bytes, including name compression, label case and record order, and a structural JSON form has no lossless way back to those bytes, so the server would have nothing it could verify.</p>
 </div>
     </section>
 
     <section id="responses-and-status-codes">
       <h2><span class="num">10</span> Responses and status codes</h2>
-<p>The RCODE gives the coarse result, so any RFC 2136-aware tool understands it. A SAZU status code, where one applies, gives the specific reason. When the request carries EDNS(0), the server <strong>MUST</strong> report it as an RFC 8914 Extended DNS Error: the status code as EXTRA-TEXT, with INFO-CODE 18 (Prohibited) for refusals by policy, 1 (Unsupported DNSKEY Algorithm) for <code class="inline">ERR_WEAK_ALGORITHM</code>, 2 (Unsupported DS Digest Type) for <code class="inline">ERR_WEAK_DS_DIGEST</code>, 6 (DNSSEC Bogus) for <code class="inline">ERR_SIG_INVALID</code>, 7 (Signature Expired) for <code class="inline">ERR_EXPIRED_SIGNATURE</code>, and 0 (Other Error) otherwise. Clients <strong>SHOULD</strong> send EDNS(0). For clients that don't, the server <strong>MUST</strong> also carry the code as a TXT record in the response's Additional section: owner = zone apex, class IN, TTL 0, the code as the first string and an optional human-readable detail as the second.</p>
+<p>The RCODE gives the coarse result, following RFC 2136 §2.6 and RFC 3007 §2, so any RFC 2136-aware tool understands it. A SAZU status code, where one applies, gives the specific reason. When the request carries EDNS(0), the server <strong>MUST</strong> report it as an RFC 8914 Extended DNS Error. The EXTRA-TEXT is the status code, optionally followed by <code class="inline">:</code> and a human-readable detail (for example the failing name and type, or a pending rollover's earliest completion time). The INFO-CODE is 18 (Prohibited) for refusals by policy, 1 (Unsupported DNSKEY Algorithm) for <code class="inline">ERR_WEAK_ALGORITHM</code>, 2 (Unsupported DS Digest Type) for <code class="inline">ERR_WEAK_DS_DIGEST</code>, 6 (DNSSEC Bogus) for <code class="inline">ERR_SIG_INVALID</code>, 7 (Signature Expired) for <code class="inline">ERR_EXPIRED_SIGNATURE</code>, and 0 (Other Error) otherwise. A client that sends no EDNS(0) gets the RCODE only.</p>
 <table>
 <thead>
 <tr>
@@ -647,22 +651,37 @@
 <tr>
 <td>FORMERR</td>
 <td>—</td>
-<td>Malformed message, or it does not match exactly one kind in §5.2.</td>
+<td>Malformed message, fails the RFC 2136 prescan (§5.1), or does not match the kinds in §5.2.</td>
+</tr>
+<tr>
+<td>NOTZONE</td>
+<td>—</td>
+<td>A prerequisite or update names something outside the zone (RFC 2136 §3.2.1, §3.4.1.3).</td>
 </tr>
 <tr>
 <td>NOTAUTH</td>
 <td>—</td>
-<td>SIG(0) missing, invalid, outside its window, or signed by a key not allowed for this kind.</td>
+<td>The server is not authoritative for, and does not accept, the zone named (RFC 2136 §3.1.1).</td>
 </tr>
 <tr>
-<td>NOTAUTH</td>
+<td>REFUSED</td>
+<td>—</td>
+<td>SIG(0) missing, invalid, outside its window, not naming the zone apex, or made by a key not allowed for this kind (RFC 3007 §2).</td>
+</tr>
+<tr>
+<td>REFUSED</td>
 <td><code class="inline">ERR_SIG_INVALID</code></td>
-<td>An added RRset has no RRSIG that verifies (§6.2).</td>
+<td>An added RRset has no RRSIG that verifies, or an RRSIG doesn't verify (§6.2).</td>
 </tr>
 <tr>
-<td>NOTAUTH</td>
+<td>REFUSED</td>
 <td><code class="inline">ERR_EXPIRED_SIGNATURE</code></td>
 <td>A covering RRSIG verifies but is outside its validity window. The fix is to re-sign and push again.</td>
+</tr>
+<tr>
+<td>REFUSED</td>
+<td><code class="inline">ERR_SIG0_LIFETIME_TOO_LONG</code></td>
+<td>The SIG(0) validity window exceeds the server's maximum (§5.1).</td>
 </tr>
 <tr>
 <td>REFUSED</td>
@@ -701,26 +720,6 @@
 </tr>
 <tr>
 <td>REFUSED</td>
-<td><code class="inline">ERR_TRANSPORT_NOT_ALLOWED</code></td>
-<td>Onboarding or rollover over UDP (§9.1).</td>
-</tr>
-<tr>
-<td>REFUSED</td>
-<td><code class="inline">ERR_QUOTA_EXCEEDED</code></td>
-<td>Per-zone 24-hour quota used up (§11.2).</td>
-</tr>
-<tr>
-<td>REFUSED</td>
-<td><code class="inline">ERR_RATE_LIMITED</code></td>
-<td>Per-source-IP rate exceeded (§11.2).</td>
-</tr>
-<tr>
-<td>NOTAUTH</td>
-<td><code class="inline">ERR_SIG0_LIFETIME_TOO_LONG</code></td>
-<td>The SIG(0) validity window exceeds the server's maximum (§5.1).</td>
-</tr>
-<tr>
-<td>REFUSED</td>
 <td><code class="inline">ERR_KEY_MANAGEMENT_REQUIRES_KSK</code></td>
 <td>A key update or contact update was authenticated by a ZSK (§5.2).</td>
 </tr>
@@ -733,6 +732,26 @@
 <td>REFUSED</td>
 <td><code class="inline">ERR_FULL_ZONE_REQUIRED</code></td>
 <td>Served content would change without an apex SOA, i.e. not as a complete replacement (§5.3).</td>
+</tr>
+<tr>
+<td>REFUSED</td>
+<td><code class="inline">ERR_INVALID_ZONE_CONTENT</code></td>
+<td>The pushed zone breaks RFC 2181 §5.2/§10.1 or RFC 6672 §2.4 (§5.3); the detail names the rule.</td>
+</tr>
+<tr>
+<td>REFUSED</td>
+<td><code class="inline">ERR_TRANSPORT_NOT_ALLOWED</code></td>
+<td>Onboarding or rollover over UDP (§9.1).</td>
+</tr>
+<tr>
+<td>REFUSED</td>
+<td><code class="inline">ERR_QUOTA_EXCEEDED</code></td>
+<td>Per-zone 24-hour quota used up (§11.2).</td>
+</tr>
+<tr>
+<td>REFUSED</td>
+<td><code class="inline">ERR_RATE_LIMITED</code></td>
+<td>Per-source-IP rate exceeded (§11.2).</td>
 </tr>
 <tr>
 <td>REFUSED</td>
@@ -842,7 +861,7 @@
 <h3><span class="num">12.5</span> Denial of service</h3>
 <p>The costly operation is the outbound chain-of-trust walk. It is triggered only by onboarding and rollover messages, only after a valid SIG(0) by the candidate key, only over a handshake-validated transport (§9.1), and only within both rate limits. Per-zone lock striping keeps one slow walk from blocking other zones. Audit rows are not written for rate or transport rejections (§11.5).</p>
 <h3><span class="num">12.6</span> Root trust anchor</h3>
-<p>The chain-of-trust check depends on a correct root trust anchor. Servers <strong>MUST</strong> have a way to update it without a new software release: either their own RFC 5011 tracking, or reading the anchors from a file that is kept current by a separate RFC 5011-tracking tool (such as <code class="inline">unbound-anchor</code>) or by the operator from IANA's published anchors. With a stale anchor, onboarding and rollover would fail for every zone at once after the next root KSK roll.</p>
+<p>The chain-of-trust check depends on a correct root trust anchor. Servers <strong>MUST</strong> have a way to update it without a new software release: either their own RFC 5011 tracking, or reading the anchors from a file that is kept current by a separate RFC 5011-tracking tool (such as <code class="inline">unbound-anchor</code>) or by the operator from IANA's published anchors (RFC 7958 format). With a stale anchor, onboarding and rollover would fail for every zone at once after the next root KSK roll.</p>
     </section>
 
     <section id="design-decisions-and-alternatives">
@@ -857,7 +876,7 @@
 </ul>
 <p>The cost: SIG(0) client support is thin (<code class="inline">nsupdate -k</code> handles it, but most libraries do not), and using a zone key for SIG(0) goes against RFC 2931's "SHOULD NOT". The amendment in <a href="rfc-diff/"><code class="inline">rfc-diff/</code></a> argues that under an externally-signed policy the update principal <em>is</em> the zone signer, so the separation RFC 2931 protects does not exist to begin with. The KSK/ZSK split restores some separation of privilege: the warm key can only push content.</p>
 <h3><span class="num">13.2</span> Full-zone pushes, not differential updates</h3>
-<p>Every content push replaces the whole zone. Differential pushes were built and tested three separate ways in the reference implementation (client-side chain cache, live reconciliation, server-side diffing) and all three were removed. They save bandwidth that typical zones do not need to save. They also bring a recurring correctness risk: incremental NSEC/NSEC3 chain maintenance, plus the fact that under NSEC3 a stateless signer cannot tell which hashed names correspond to a removal. A full push needs no signer-side state at all: the zone file <em>is</em> the push. The cost is transfer size and signing time proportional to the zone. That matters for zones with millions of records, which SAZU does not target.</p>
+<p>Every content push replaces the whole zone. The differential alternatives — a client-side cache of the last push, live reconciliation against the server, or server-side diffing — save bandwidth that typical zones do not need to save. They also bring a recurring correctness risk: incremental NSEC/NSEC3 chain maintenance, plus the fact that under NSEC3 a stateless signer cannot tell which hashed names correspond to a removal. A full push needs no signer-side state at all: the zone file <em>is</em> the push. The cost is transfer size and signing time proportional to the zone. That matters for zones with millions of records, which SAZU does not target.</p>
 <h3><span class="num">13.3</span> Mandatory verification</h3>
 <p>A server could store whatever an authenticated principal sends ("trust the pipe"), or check only signature metadata. Both were rejected. SAZU's single guarantee is that what the server serves validates. A server that skips verification makes the same claim without backing it, and to anyone who has not audited it, it looks identical to one that does verify.</p>
 <h3><span class="num">13.4</span> Scoping signers by delegation, not by key</h3>
@@ -868,31 +887,25 @@
 
     <section id="reference-implementation-status">
       <h2><span class="num">14</span> Reference implementation status</h2>
-<p>The CoreDNS plugin in <a href="https://github.com/mrwiora/coredns/tree/feat/sazu/plugin/sazu"><code class="inline">mrwiora/coredns</code></a> (plugin <code class="inline">sazu</code>, client <code class="inline">sazuctl</code>, monitor <code class="inline">sazu-watchd</code>) is a proof of concept that implements this specification in full, as a single server (§11.7). It implements:</p>
+<p>The CoreDNS plugin in <a href="https://github.com/mrwiora/coredns/tree/feat/sazu/plugin/sazu"><code class="inline">mrwiora/coredns</code></a> (plugin <code class="inline">sazu</code>, client <code class="inline">sazuctl</code>, monitor <code class="inline">sazu-watchd</code>) is a proof of concept that implements this specification in full, as a single server (§11.7):</p>
 <ul>
-<li>onboarding with root-to-parent DNSSEC validation against a configurable trust anchor file (§7, §12.6);</li>
+<li>onboarding with root-to-parent DNSSEC validation against a configurable trust anchor file, zone-file or RFC 7958 format (§7, §12.6);</li>
 <li>the KSK/ZSK split, with key updates, contact changes, rollover cancellation and decommission restricted to the KSK (§5.2);</li>
-<li>full-zone pushes with NSEC or NSEC3, and mandatory RRSIG verification against the RRset as it will be served (§5.3, §6.2);</li>
+<li>full-zone pushes with NSEC or NSEC3, the RFC 2136 prescan, zone validity checks, and mandatory RRSIG verification against the RRset as it will be served (§5.1, §5.3, §6.2);</li>
+<li>authoritative answering per §6.4, including wildcards, CNAME/DNAME, referrals and DS, NSEC/NSEC3 proofs, EDNS(0) and minimal ANY;</li>
 <li>double-DS KSK rollover with the old-KSK co-signature and the hold-down (§8.2);</li>
 <li>replay protection by SOA serial and zone version, and the SIG(0) lifetime cap (§5.1, §6.3);</li>
-<li>DNS over TCP and UDP and the HTTPS carrier, with the UDP restriction for onboarding and rollover (§9);</li>
-<li>status codes as Extended DNS Errors and TXT (§10);</li>
+<li>DNS over TCP and UDP and DNS over HTTPS, with the UDP restriction for onboarding and rollover (§9);</li>
+<li>status codes as Extended DNS Errors (§10);</li>
 <li>quotas, per-IP rate limits (IPv6 counted per /64), SQLite persistence and the audit trail (§11);</li>
-<li>the §11.4 monitor with email and webhook alerts, including rollover and signature-expiry alerts.</li>
+<li>the §11.4 monitor with email (RFC 5322) and webhook alerts, including rollover and signature-expiry alerts.</li>
 </ul>
-<p>It has no known divergences from this specification. Until the fixes from the review of this revision are merged into <code class="inline">feat/sazu</code>, they are on the <a href="https://github.com/mrwiora/coredns/tree/fix/sazu-spec-v2-conformance/plugin/sazu"><code class="inline">fix/sazu-spec-v2-conformance</code></a> branch. The implementation's <code class="inline">plugin/sazu/docs/SAZU-THREAT-MODEL.md</code> is a STRIDE analysis of the code and lists the issues that review found and fixed.</p>
+<p>It has no known divergences from this specification. Beyond it, it offers no zone transfer (AXFR/IXFR, NOTIFY) and no built-in RFC 5011 tracking, which §11.7 and §12.6 leave optional. Until they are merged into <code class="inline">feat/sazu</code>, the changes for this revision are on the <a href="https://github.com/mrwiora/coredns/tree/fix/sazu-spec-v2-conformance/plugin/sazu"><code class="inline">fix/sazu-spec-v2-conformance</code></a> branch. The implementation's <code class="inline">plugin/sazu/docs/SAZU-THREAT-MODEL.md</code> is a STRIDE analysis of the code.</p>
     </section>
 
     <section id="open-issues">
       <h2><span class="num">15</span> Open issues</h2>
-<p>None as of this revision. The issues listed in earlier drafts were resolved as follows:</p>
-<ul>
-<li><strong>Rollover hold-down:</strong> specified in §8.2 and implemented.</li>
-<li><strong>Status codes via Extended DNS Errors:</strong> specified in §10 and implemented.</li>
-<li><strong>Per-key scoping beyond KSK/ZSK:</strong> resolved by delegation (§13.4).</li>
-<li><strong>Multi-instance consistency:</strong> the requirements are normative in §11.7; the reference implementation runs as a single server, which meets them.</li>
-<li><strong>Registrar behavior:</strong> not a protocol matter; the unverified entries are marked as such in §16.</li>
-</ul>
+<p>None.</p>
     </section>
 
     <section id="registrar-notes-informative">
@@ -949,28 +962,6 @@
 </tr>
 </tbody>
 </table>
-    </section>
-
-    <section id="changes-since-v1-5">
-      <h2><span class="num">17</span> Changes since v1.5</h2>
-<ul>
-<li><strong>HTTPS carrier:</strong> now the exact wire bytes (RFC 8484 media type, optional <code class="inline">{"wire"}</code> envelope) instead of RFC 8427 structural JSON, which cannot preserve the bytes SIG(0) signs (§9.2).</li>
-<li><strong>Message kinds and authorization</strong> are defined explicitly (§5.2). Key management, contact changes and decommission require the KSK. The apex DNSKEY RRset must be signed by the KSK (§6.2).</li>
-<li><strong>Onboarding</strong> carries keys only. Content follows in a separate push (§7.1).</li>
-<li><strong>KSK rollover</strong> is a double-DS rollover that re-pins in place. The v1.5 "second registration with its own copy of the zone, retiring after 90 days of inactivity" model is dropped (§8.2).</li>
-<li><strong>Replay protection</strong> is now normative: a per-zone version counter that every control change must name as a prerequisite, SOA serial monotonicity for content, and a cap on SIG(0) lifetime (§5.1, §6.3). v1.5 relied on an optional prerequisite.</li>
-<li><strong>Algorithm section corrected:</strong> SIG(0) and zone signing necessarily share an algorithm, because the SIG(0) key <em>is</em> the zone key. The v1.5 advice to use RSA for SIG(0) independently of the zone algorithm is removed.</li>
-<li><strong>Transport rule added:</strong> no onboarding or rollover over UDP (§9.1). New status codes: <code class="inline">ERR_TRANSPORT_NOT_ALLOWED</code>, <code class="inline">ERR_FIRST_CONTACT_REQUIRES_KSK</code>, <code class="inline">ERR_DECOMMISSION_REQUIRES_KSK</code>.</li>
-<li><strong>Decommission</strong> is added (§8.4).</li>
-<li><strong>Removed:</strong> the per-customer account prerequisite (replaced by server scope policy), asynchronous verification with a status endpoint (verification is synchronous), deleting a zone after a day of parent silence (unsafe: an outage or an attacker blocking resolution would delete zones), and freezing pushes on any delegation change (replaced by the rollover hold-down, §8.2).</li>
-<li><strong>Fixed</strong> the RFC 3007 reference (§4.3), dropped the "Level 0/1/2" framing (only full verification exists), and moved the registrar table to an informative appendix.</li>
-<li>The document's own reference implementation is now linked, together with its status (§14).</li>
-<li><strong>KSK rollover hold-down:</strong> a rollover not co-signed by the old KSK waits out a hold-down (default 72 hours), during which the contact is alerted and the current KSK can cancel it (§8.2).</li>
-<li><strong>Status codes</strong> are reported as RFC 8914 Extended DNS Errors, with the TXT record kept for clients without EDNS (§10).</li>
-<li><strong>Combined messages:</strong> a content push may carry an onboarding or key update, subject to the rules of each (§5.2).</li>
-<li><strong>Signer scoping</strong> is done by delegating a subzone (§13.4). <strong>Multi-server</strong> operation has normative consistency requirements (§11.7).</li>
-<li><strong>No open issues remain</strong> (§15), and the reference implementation has no known divergences (§14).</li>
-</ul>
 <hr/>
 <p><em>SAZU — Self-Authenticated Zone Update · Draft proposal v2.0</em></p>
     </section>
