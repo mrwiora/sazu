@@ -3,8 +3,7 @@
 SAZU (Self-Authenticated Zone Update) is meant to eventually be
 implementable across major open-source DNS servers, not just one. This is
 a checklist of what a candidate codebase should already offer — or make
-easy to add — before starting a port, distilled from experience actually
-building SAZU against real DNS server codebases. Treat it as a readiness
+easy to add — before starting a port. Treat it as a readiness
 assessment to run against a codebase *before* committing to a port, not as
 an implementation plan.
 
@@ -86,7 +85,18 @@ sees either the old zone or the new one and never a mix
 (copy-on-write or swap-on-commit both fit well here, since updates are
 whole-zone and infrequent).
 
-## 7. A policy hook for first-contact zone creation
+## 7. Serving pre-signed zones, NSEC3 included
+
+Can the server answer authoritatively from a zone that arrives already
+signed — returning the stored RRSIGs and picking the right stored NSEC or
+NSEC3 records for NXDOMAIN, NODATA, wildcard and delegation answers (RFC
+4035 §3.1, RFC 5155 §7.2) — without holding a key? Many servers can load a
+signed zone file but support only NSEC, or only answer correctly when they
+sign online themselves. SAZU needs the full RFC 1034 §4.3.2 lookup
+(wildcards, CNAME/DNAME, referrals, DS at the parent side of a cut) over
+stored, pre-signed data (spec §6.4).
+
+## 8. A policy hook for first-contact zone creation
 
 SAZU's first-contact case is a signed update for a zone the server has
 never heard of before — should the server create that zone on the fly
@@ -96,7 +106,7 @@ needs to have *a place* for, not a cryptographic one — check whether
 zone-creation is a first-class, callable operation, or something that only
 happens via startup-time config parsing.
 
-## 8. Root trust anchor / DNSSEC validation scaffolding
+## 9. Root trust anchor / DNSSEC validation scaffolding
 
 Does the codebase already carry hardcoded root trust anchors or any
 DNSSEC signature validation code (even a recursive-resolver-side
@@ -105,7 +115,7 @@ zero? Existing scaffolding — even partial or stubbed — saves real time and
 usually means someone already made the "how do we keep trust anchors
 updatable" decision you'd otherwise have to make fresh.
 
-## 9. Opcode dispatch extensibility
+## 10. Opcode dispatch extensibility
 
 Is there one clear place where an incoming message's opcode (Query,
 Update, Notify, ...) is switched on, or is opcode handling implicit /
@@ -115,7 +125,7 @@ independent of SAZU — an UPDATE message sent to a server that doesn't
 check opcode gets silently misinterpreted rather than rejected — and it's
 worth fixing before adding SAZU on top, not after.
 
-## 10. Abuse-prevention / rate-limiting hooks
+## 11. Abuse-prevention / rate-limiting hooks
 
 Is there an existing per-source-IP rate limiter or ACL layer that new
 logic can register against, or would SAZU's abuse-prevention rules (e.g.
@@ -124,7 +134,7 @@ own bespoke mechanism? Reusing an existing framework is strongly
 preferable — a second, parallel rate-limiting system is its own source of
 bugs.
 
-## 11. A library/binary (or module/executable) separation
+## 12. A library/binary (or module/executable) separation
 
 Can the wire-format and cryptographic code be reused from a *second*,
 independent binary — a minimal test client and a minimal test authority —
@@ -137,7 +147,7 @@ no importable package/library boundary around the wire-format and crypto
 code, needs a refactor first — splitting that code out into its own
 reusable module — before this kind of testing is possible.
 
-## 12. License and contribution norms
+## 13. License and contribution norms
 
 Is the codebase's license (and, if relevant, its CLA/contribution process)
 compatible with adding and eventually upstreaming a security-sensitive
