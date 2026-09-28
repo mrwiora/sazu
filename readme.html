@@ -887,20 +887,21 @@
 
     <section id="reference-implementation-status">
       <h2><span class="num">14</span> Reference implementation status</h2>
-<p>The CoreDNS plugin in <a href="https://github.com/mrwiora/coredns/tree/feat/sazu/plugin/sazu"><code class="inline">mrwiora/coredns</code></a> (plugin <code class="inline">sazu</code>, client <code class="inline">sazuctl</code>, monitor <code class="inline">sazu-watchd</code>) is a proof of concept that implements this specification in full, as a single server (§11.7):</p>
+<p>The CoreDNS plugin in <a href="https://github.com/mrwiora/coredns/tree/feat/sazu/plugin/sazu"><code class="inline">mrwiora/coredns</code></a> (plugin <code class="inline">sazu</code>, client <code class="inline">sazuctl</code>, monitor <code class="inline">sazu-watchd</code>) is a proof of concept that implements this specification in full. It is built on CoreDNS's own facilities rather than beside them:</p>
 <ul>
 <li>onboarding with root-to-parent DNSSEC validation against a configurable trust anchor file, zone-file or RFC 7958 format (§7, §12.6);</li>
 <li>the KSK/ZSK split, with key updates, contact changes, rollover cancellation and decommission restricted to the KSK (§5.2);</li>
-<li>full-zone pushes with NSEC or NSEC3, the RFC 2136 prescan, zone validity checks, and mandatory RRSIG verification against the RRset as it will be served (§5.1, §5.3, §6.2);</li>
-<li>authoritative answering per §6.4, including wildcards, CNAME/DNAME, referrals and DS, NSEC/NSEC3 proofs, EDNS(0) and minimal ANY;</li>
+<li>full-zone pushes with NSEC or NSEC3, the RFC 2136 prescan and prerequisite evaluation (shared with CoreDNS's <code class="inline">dynupdate</code> plugin), zone validity checks, and mandatory RRSIG verification against the RRset as it will be served (§5.1, §5.3, §6.2);</li>
+<li>authoritative answering per §6.4 by CoreDNS's <code class="inline">file</code> plugin, extended to serve NSEC3-signed zones;</li>
+<li>zone transfer (AXFR, IXFR by fallback) and NOTIFY to secondaries through CoreDNS's <code class="inline">transfer</code> plugin, the single-writer arrangement of §11.7;</li>
 <li>double-DS KSK rollover with the old-KSK co-signature and the hold-down (§8.2);</li>
 <li>replay protection by SOA serial and zone version, and the SIG(0) lifetime cap (§5.1, §6.3);</li>
-<li>DNS over TCP and UDP and DNS over HTTPS, with the UDP restriction for onboarding and rollover (§9);</li>
+<li>UPDATE over UDP, TCP, DNS over TLS, HTTPS, HTTP/3 and QUIC, the exact request bytes supplied by the CoreDNS server for SIG(0) verification, and the UDP restriction for onboarding and rollover (§9);</li>
 <li>status codes as Extended DNS Errors (§10);</li>
-<li>quotas, per-IP rate limits (IPv6 counted per /64), SQLite persistence and the audit trail (§11);</li>
+<li>quotas, per-IP rate limits (IPv6 counted per /64), persistence in bbolt shared across configuration reloads, and the audit trail (§11);</li>
 <li>the §11.4 monitor with email (RFC 5322) and webhook alerts, including rollover and signature-expiry alerts.</li>
 </ul>
-<p>It has no known divergences from this specification. Beyond it, it offers no zone transfer (AXFR/IXFR, NOTIFY) and no built-in RFC 5011 tracking, which §11.7 and §12.6 leave optional. Until they are merged into <code class="inline">feat/sazu</code>, the changes for this revision are on the <a href="https://github.com/mrwiora/coredns/tree/fix/sazu-spec-v2-conformance/plugin/sazu"><code class="inline">fix/sazu-spec-v2-conformance</code></a> branch. The implementation's <code class="inline">plugin/sazu/docs/SAZU-THREAT-MODEL.md</code> is a STRIDE analysis of the code.</p>
+<p>It has no known divergences from this specification. It has no built-in RFC 5011 tracking, which §12.6 leaves optional; minimal ANY responses (RFC 8482) are left to CoreDNS's <code class="inline">any</code> plugin. The implementation's <code class="inline">plugin/sazu/docs/SAZU-THREAT-MODEL.md</code> is a STRIDE analysis of the code.</p>
     </section>
 
     <section id="open-issues">
